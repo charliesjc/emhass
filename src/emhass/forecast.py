@@ -142,6 +142,8 @@ class Forecast(object):
         self.var_load_new = self.var_load+'_positive'
         self.lat = self.retrieve_hass_conf['lat'] 
         self.lon = self.retrieve_hass_conf['lon']
+        self.horizon = self.retrieve_hass_conf['horizon']
+        self.damping = self.retrieve_hass_conf['damping']
         self.emhass_conf = emhass_conf
         self.logger = logger
         self.get_data_from_file = get_data_from_file
@@ -271,7 +273,8 @@ class Forecast(object):
             for i in range(len(self.plant_conf['module_model'])):
                 url = "https://api.forecast.solar/estimate/"+str(round(self.lat, 2))+"/"+str(round(self.lon, 2))+\
                     "/"+str(self.plant_conf["surface_tilt"][i])+"/"+str(self.plant_conf["surface_azimuth"][i]-180)+\
-                    "/"+str(self.retrieve_hass_conf["solar_forecast_kwp"])
+                    "/"+str(self.retrieve_hass_conf["solar_forecast_kwp"])+"?damping="+str(self.retrieve_hass_conf["damping"])+\
+                    "&horizon="+str(self.retrieve_hass_conf["horizon"])
                 response = get(url, headers=headers)
                 '''import bz2 # Uncomment to save a serialized data for tests
                 import _pickle as cPickle

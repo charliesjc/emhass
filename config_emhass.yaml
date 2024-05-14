@@ -37,6 +37,8 @@ optim_conf:
   - False
   - False
   weather_forecast_method: 'scrapper' # options are 'scrapper', 'csv', 'list', 'solcast' and 'solar.forecast'
+  damping: 0 # options are 0, to apply no forecast correction, or up to 1 to account for early morning/late afternoon shadowing. Entering 0.25,0.75 would apply separate morning and evening corrections (only needed if weather_forecast_method='solar.forecast')
+  horizon: 0 # see https://doc.forecast.solar/horizon for details on how to use the horizon function (only needed if weather_forecast_method='solar.forecast')
   load_forecast_method: 'naive' # options are 'csv' to load a custom load forecast from a CSV file or 'naive' for a persistance model
   load_cost_forecast_method: 'hp_hc_periods' # options are 'hp_hc_periods' for peak and non-peak hours contracts and 'csv' to load custom cost from CSV file 
   list_hp_periods: # list of different tariff periods (only needed if load_cost_forecast_method='hp_hc_periods')
