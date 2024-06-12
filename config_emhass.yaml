@@ -13,6 +13,7 @@ retrieve_hass_conf:
   - 'sensor.power_photovoltaics'
   - 'sensor.power_load_no_var_loads'
   method_ts_round: 'nearest' # Set the method for timestamp rounding, options are: first, last and nearest
+  continual_publish: False # Save published sensor data and check for state change every freq minutes
 
 optim_conf:
   set_use_battery: False # consider a battery storage
@@ -78,6 +79,7 @@ plant_conf:
   - 16 
   strings_per_inverter: # The number of used strings per inverter
   - 1
+  inverter_is_hybrid: False # Set if it is a hybrid inverter (PV+batteries) or not
   Pd_max: 1000 # If your system has a battery (set_use_battery=True), the maximum discharge power in Watts
   Pc_max: 1000 # If your system has a battery (set_use_battery=True), the maximum charge power in Watts
   eta_disch: 0.95 # If your system has a battery (set_use_battery=True), the discharge efficiency

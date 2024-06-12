@@ -7,21 +7,21 @@ from requests import get
 from waitress import serve
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
-import os, json, argparse, pickle, yaml, logging,  re
+import os, json, argparse, pickle, yaml, logging,  re, threading
 from distutils.util import strtobool
 
 from emhass.command_line import set_input_data_dict
 from emhass.command_line import perfect_forecast_optim, dayahead_forecast_optim, naive_mpc_optim
 from emhass.command_line import forecast_model_fit, forecast_model_predict, forecast_model_tune
 from emhass.command_line import regressor_model_fit, regressor_model_predict
-from emhass.command_line import publish_data
+from emhass.command_line import publish_data, continual_publish
 from emhass.utils import get_injection_dict, get_injection_dict_forecast_model_fit, \
     get_injection_dict_forecast_model_tune, build_params
 
 # Define the Flask instance
 app = Flask(__name__)
 
-#check logfile for error, anything after string match if provided 
+# Check logfile for error, anything after string match if provided 
 def checkFileLog(refString=None):
     if (refString is not None): 
        logArray = grabLog(refString) #grab reduced log array
@@ -34,7 +34,7 @@ def checkFileLog(refString=None):
                 return True     
     return False
 
-#find string in logs, append all lines after to return
+# Find string in logs, append all lines after to return
 def grabLog(refString): 
     isFound = []
     output = []
@@ -49,13 +49,14 @@ def grabLog(refString):
                     output.append(logArray[x])
     return output
 
-#clear the log file
+# Clear the log file
 def clearFileLog(): 
     if ((emhass_conf['data_path'] / 'actionLogs.txt')).exists():
         with open(str(emhass_conf['data_path'] / 'actionLogs.txt'), "w") as fp:
             fp.truncate()    
 
-#initial index page render
+
+# Initial index page render
 @app.route('/')
 def index():
     app.logger.info("EMHASS server online, serving index.html...")
@@ -97,6 +98,7 @@ def template_action(action_name):
 #post actions 
 @app.route('/action/<action_name>', methods=['POST'])
 def action_call(action_name):
+    # Setting up parameters
     with open(str(emhass_conf['data_path'] / 'params.pkl'), "rb") as fid:
         emhass_conf['config_path'], params = pickle.load(fid)
     runtimeparams = request.get_json(force=True)
@@ -110,6 +112,15 @@ def action_call(action_name):
         params, runtimeparams, action_name, app.logger)
     if not input_data_dict:
         return make_response(grabLog(ActionStr), 400)
+    
+    # If continual_publish is True, start thread with loop function
+    if len(continual_publish_thread) == 0 and input_data_dict['retrieve_hass_conf'].get("continual_publish",False):
+        # Start Thread
+        continualLoop = threading.Thread(name="continual_publish",target=continual_publish,args=[input_data_dict,entity_path,app.logger])
+        continualLoop.start()
+        continual_publish_thread.append(continualLoop)      
+        
+    # run action based on POST request
     if action_name == 'publish-data':
         ActionStr = " >> Publishing data..."
         app.logger.info(ActionStr)
@@ -238,6 +249,7 @@ if __name__ == "__main__":
     CONFIG_PATH = os.getenv("CONFIG_PATH", default="/app/config_emhass.yaml")
     OPTIONS_PATH = os.getenv('OPTIONS_PATH', default="/app/options.json")
     DATA_PATH = os.getenv("DATA_PATH", default="/app/data/")
+    ROOT_PATH = os.getenv("ROOT_PATH", default=str(Path(__file__).parent))
     
     #options None by default
     options = None 
@@ -273,10 +285,11 @@ if __name__ == "__main__":
     #save paths to dictionary
     config_path = Path(CONFIG_PATH)
     data_path = Path(DATA_PATH)
+    root_path = Path(ROOT_PATH)
     emhass_conf = {}
     emhass_conf['config_path'] = config_path
     emhass_conf['data_path'] = data_path
-    emhass_conf['root_path'] = Path(config_path).parent #assume root is parent of config_path
+    emhass_conf['root_path'] = root_path 
     
     # Read the example default config file
     if config_path.exists():
@@ -446,6 +459,18 @@ if __name__ == "__main__":
     app.logger.addHandler(fileLogger)   
     clearFileLog() #Clear Action File logger file, ready for new instance
 
+
+    #If entity_path exists, remove any entity/metadata files 
+    entity_path = emhass_conf['data_path'] / "entities"
+    if os.path.exists(entity_path): 
+        entity_pathContents = os.listdir(entity_path)
+        if len(entity_pathContents) > 0:
+            for entity in entity_pathContents:
+                os.remove(entity_path / entity)
+
+    # Initialise continual publish thread list
+    continual_publish_thread = []
+    
     # Launch server
     port = int(os.environ.get('PORT', 5000))
     app.logger.info("Launching the emhass webserver at: http://"+web_ui_url+":"+str(port))

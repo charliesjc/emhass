@@ -12,7 +12,6 @@ import pandas as pd
 import yaml
 import pytz
 
-
 import plotly.express as px
 
 pd.options.plotting.backend = "plotly"
@@ -161,6 +160,11 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             "entity_id": "sensor.p_load_forecast",
             "unit_of_measurement": "W",
             "friendly_name": "Load Power Forecast",
+        },
+        "custom_pv_curtailment_id": {
+            "entity_id": "sensor.p_pv_curtailment",
+            "unit_of_measurement": "W",
+            "friendly_name": "PV Power Curtailment",
         },
         "custom_batt_forecast_id": {
             "entity_id": "sensor.p_batt_forecast",
@@ -413,6 +417,8 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             optim_conf["def_start_timestep"] = runtimeparams["def_start_timestep"]
         if "def_end_timestep" in runtimeparams.keys():
             optim_conf["def_end_timestep"] = runtimeparams["def_end_timestep"]
+        if "def_current_state" in runtimeparams.keys():
+            optim_conf["def_current_state"] = [bool(s) for s in runtimeparams["def_current_state"]]
         if "treat_def_as_semi_cont" in runtimeparams.keys():
             optim_conf["treat_def_as_semi_cont"] = [
                 eval(str(k).capitalize())
@@ -443,6 +449,8 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             optim_conf["weight_battery_charge"] = runtimeparams["weight_battery_charge"]
         if 'freq' in runtimeparams.keys():
             retrieve_hass_conf['freq'] = pd.to_timedelta(runtimeparams['freq'], "minutes")
+        if 'continual_publish' in runtimeparams.keys():
+            retrieve_hass_conf['continual_publish'] = bool(runtimeparams['continual_publish'])  
         # Treat plant configuration parameters passed at runtime
         if "SOCtarget" in runtimeparams.keys():
             plant_conf["SOCtarget"] = runtimeparams["SOCtarget"]
@@ -454,6 +462,10 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
         if "custom_load_forecast_id" in runtimeparams.keys():
             params["passed_data"]["custom_load_forecast_id"] = runtimeparams[
                 "custom_load_forecast_id"
+            ]
+        if "custom_pv_curtailment_id" in runtimeparams.keys():
+            params["passed_data"]["custom_pv_curtailment_id"] = runtimeparams[
+                "custom_pv_curtailment_id"
             ]
         if "custom_batt_forecast_id" in runtimeparams.keys():
             params["passed_data"]["custom_batt_forecast_id"] = runtimeparams[
@@ -487,12 +499,18 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             params["passed_data"]["custom_deferrable_forecast_id"] = runtimeparams[
                 "custom_deferrable_forecast_id"
             ]
-        # A condition to put a prefix on all published data
+        # A condition to put a prefix on all published data, or check for saved data under prefix name
         if "publish_prefix" not in runtimeparams.keys():
             publish_prefix = ""
         else:
             publish_prefix = runtimeparams["publish_prefix"]
         params["passed_data"]["publish_prefix"] = publish_prefix
+        # A condition to manually save entity data under data_path/entities after optimization
+        if "entity_save" not in runtimeparams.keys():
+            entity_save = ""
+        else:
+            entity_save = runtimeparams["entity_save"]
+        params["passed_data"]["entity_save"] = entity_save
     # Serialize the final params
     params = json.dumps(params)
     return params, retrieve_hass_conf, optim_conf, plant_conf
@@ -521,7 +539,7 @@ def get_yaml_parse(emhass_conf: dict, use_secrets: Optional[bool] = True,
         input_conf = json.loads(params)
     if use_secrets:
         if params is None:
-            with open(emhass_conf["root_path"] / 'secrets_emhass.yaml', 'r') as file: #assume secrets file is in root path 
+            with open(emhass_conf["config_path"].parent / 'secrets_emhass.yaml', 'r') as file: # Assume secrets and config file paths are the same 
                 input_secrets = yaml.load(file, Loader=yaml.FullLoader)
         else:
             input_secrets = input_conf.pop("params_secrets", None)
@@ -730,60 +748,30 @@ def build_params(params: dict, params_secrets: dict, options: dict, addon: int,
     """
     if addon == 1:
         # Updating variables in retrieve_hass_conf
-        params["retrieve_hass_conf"]["freq"] = options.get(
-            "optimization_time_step", params["retrieve_hass_conf"]["freq"]
-        )
-        params["retrieve_hass_conf"]["days_to_retrieve"] = options.get(
-            "historic_days_to_retrieve",
-            params["retrieve_hass_conf"]["days_to_retrieve"],
-        )
-        params["retrieve_hass_conf"]["var_PV"] = options.get(
-            "sensor_power_photovoltaics", params["retrieve_hass_conf"]["var_PV"]
-        )
-        params["retrieve_hass_conf"]["var_load"] = options.get(
-            "sensor_power_load_no_var_loads", params["retrieve_hass_conf"]["var_load"]
-        )
-        params["retrieve_hass_conf"]["load_negative"] = options.get(
-            "load_negative", params["retrieve_hass_conf"]["load_negative"]
-        )
-        params["retrieve_hass_conf"]["set_zero_min"] = options.get(
-            "set_zero_min", params["retrieve_hass_conf"]["set_zero_min"]
-        )
+        params["retrieve_hass_conf"]["freq"] = options.get("optimization_time_step", params["retrieve_hass_conf"]["freq"])
+        params["retrieve_hass_conf"]["days_to_retrieve"] = options.get("historic_days_to_retrieve", params["retrieve_hass_conf"]["days_to_retrieve"])
+        params["retrieve_hass_conf"]["var_PV"] = options.get("sensor_power_photovoltaics", params["retrieve_hass_conf"]["var_PV"])
+        params["retrieve_hass_conf"]["var_load"] = options.get("sensor_power_load_no_var_loads", params["retrieve_hass_conf"]["var_load"])
+        params["retrieve_hass_conf"]["load_negative"] = options.get("load_negative", params["retrieve_hass_conf"]["load_negative"])
+        params["retrieve_hass_conf"]["set_zero_min"] = options.get("set_zero_min", params["retrieve_hass_conf"]["set_zero_min"])
         params["retrieve_hass_conf"]["var_replace_zero"] = [
-            options.get(
-                "sensor_power_photovoltaics",
-                params["retrieve_hass_conf"]["var_replace_zero"],
-            )
+            options.get("sensor_power_photovoltaics", params["retrieve_hass_conf"]["var_replace_zero"])
         ]
         params["retrieve_hass_conf"]["var_interp"] = [
-            options.get(
-                "sensor_power_photovoltaics", params["retrieve_hass_conf"]["var_PV"]
-            ),
-            options.get(
-                "sensor_power_load_no_var_loads",
-                params["retrieve_hass_conf"]["var_load"],
-            ),
+            options.get("sensor_power_photovoltaics", params["retrieve_hass_conf"]["var_PV"]),
+            options.get("sensor_power_load_no_var_loads", params["retrieve_hass_conf"]["var_load"])
         ]
-        params["retrieve_hass_conf"]["method_ts_round"] = options.get(
-            "method_ts_round", params["retrieve_hass_conf"]["method_ts_round"]
-        )
+        params["retrieve_hass_conf"]["method_ts_round"] = options.get("method_ts_round", params["retrieve_hass_conf"]["method_ts_round"])
+        params["retrieve_hass_conf"]["continual_publish"] = options.get("continual_publish", params["retrieve_hass_conf"]["continual_publish"])
         # Update params Secrets if specified
         params["params_secrets"] = params_secrets
-        params["params_secrets"]["time_zone"] = options.get(
-            "time_zone", params_secrets["time_zone"]
-        )
+        params["params_secrets"]["time_zone"] = options.get("time_zone", params_secrets["time_zone"])
         params["params_secrets"]["lat"] = options.get("Latitude", params_secrets["lat"])
-        params["params_secrets"]["lon"] = options.get(
-            "Longitude", params_secrets["lon"]
-        )
+        params["params_secrets"]["lon"] = options.get("Longitude", params_secrets["lon"])
         params["params_secrets"]["alt"] = options.get("Altitude", params_secrets["alt"])
         # Updating variables in optim_conf
-        params["optim_conf"]["set_use_battery"] = options.get(
-            "set_use_battery", params["optim_conf"]["set_use_battery"]
-        )
-        params["optim_conf"]["num_def_loads"] = options.get(
-            "number_of_deferrable_loads", params["optim_conf"]["num_def_loads"]
-        )
+        params["optim_conf"]["set_use_battery"] = options.get("set_use_battery", params["optim_conf"]["set_use_battery"])
+        params["optim_conf"]["num_def_loads"] = options.get("number_of_deferrable_loads", params["optim_conf"]["num_def_loads"])
         if options.get("list_nominal_power_of_deferrable_loads", None) != None:
             params["optim_conf"]["P_deferrable_nom"] = [
                 i["nominal_power_of_deferrable_loads"]
@@ -799,43 +787,22 @@ def build_params(params: dict, params_secrets: dict, options: dict, addon: int,
                 i["treat_deferrable_load_as_semi_cont"]
                 for i in options.get("list_treat_deferrable_load_as_semi_cont")
             ]
-        params["optim_conf"]["weather_forecast_method"] = options.get(
-            "weather_forecast_method", params["optim_conf"]["weather_forecast_method"]
-        )
+        params["optim_conf"]["weather_forecast_method"] = options.get("weather_forecast_method", params["optim_conf"]["weather_forecast_method"])
         # Update optional param secrets
         if params["optim_conf"]["weather_forecast_method"] == "solcast":
-            params["params_secrets"]["solcast_api_key"] = options.get(
-                "optional_solcast_api_key",
-                params_secrets.get("solcast_api_key", "123456"),
-            )
-            params["params_secrets"]["solcast_rooftop_id"] = options.get(
-                "optional_solcast_rooftop_id",
-                params_secrets.get("solcast_rooftop_id", "123456"),
-            )
+            params["params_secrets"]["solcast_api_key"] = options.get("optional_solcast_api_key", params_secrets.get("solcast_api_key", "123456"))
+            params["params_secrets"]["solcast_rooftop_id"] = options.get("optional_solcast_rooftop_id", params_secrets.get("solcast_rooftop_id", "123456"))
         elif params["optim_conf"]["weather_forecast_method"] == "solar.forecast":
-            params["params_secrets"]["solar_forecast_kwp"] = options.get(
-                "optional_solar_forecast_kwp",
-                params_secrets.get("solar_forecast_kwp", 5),
-            )
-        params["optim_conf"]["load_forecast_method"] = options.get(
-            "load_forecast_method", params["optim_conf"]["load_forecast_method"]
-        )
-        params["optim_conf"]["delta_forecast"] = options.get(
-            "delta_forecast_daily", params["optim_conf"]["delta_forecast"]
-        )
-        params["optim_conf"]["load_cost_forecast_method"] = options.get(
-            "load_cost_forecast_method",
-            params["optim_conf"]["load_cost_forecast_method"],
-        )
+            params["params_secrets"]["solar_forecast_kwp"] = options.get("optional_solar_forecast_kwp", params_secrets.get("solar_forecast_kwp", 5))
+        params["optim_conf"]["load_forecast_method"] = options.get("load_forecast_method", params["optim_conf"]["load_forecast_method"])
+        params["optim_conf"]["delta_forecast"] = options.get("delta_forecast_daily", params["optim_conf"]["delta_forecast"])
+        params["optim_conf"]["load_cost_forecast_method"] = options.get("load_cost_forecast_method", params["optim_conf"]["load_cost_forecast_method"])
         if options.get("list_set_deferrable_load_single_constant", None) != None:
             params["optim_conf"]["set_def_constant"] = [
                 i["set_deferrable_load_single_constant"]
                 for i in options.get("list_set_deferrable_load_single_constant")
             ]
-        if (
-            options.get("list_peak_hours_periods_start_hours", None) != None
-            and options.get("list_peak_hours_periods_end_hours", None) != None
-        ):
+        if (options.get("list_peak_hours_periods_start_hours", None) != None and options.get("list_peak_hours_periods_end_hours", None) != None):
             start_hours_list = [
                 i["peak_hours_periods_start_hours"]
                 for i in options["list_peak_hours_periods_start_hours"]
@@ -847,27 +814,27 @@ def build_params(params: dict, params_secrets: dict, options: dict, addon: int,
             num_peak_hours = len(start_hours_list)
             list_hp_periods_list = [{'period_hp_'+str(i+1):[{'start':start_hours_list[i]},{'end':end_hours_list[i]}]} for i in range(num_peak_hours)]
             params['optim_conf']['list_hp_periods'] = list_hp_periods_list
-        params['optim_conf']['load_cost_hp'] = options.get('load_peak_hours_cost',params['optim_conf']['load_cost_hp'])
+        params['optim_conf']['load_cost_hp'] = options.get('load_peak_hours_cost', params['optim_conf']['load_cost_hp'])
         params['optim_conf']['load_cost_hc'] = options.get('load_offpeak_hours_cost', params['optim_conf']['load_cost_hc'])
         params['optim_conf']['prod_price_forecast_method'] = options.get('production_price_forecast_method', params['optim_conf']['prod_price_forecast_method'])
-        params['optim_conf']['prod_sell_price'] = options.get('photovoltaic_production_sell_price',params['optim_conf']['prod_sell_price'])
-        params['optim_conf']['set_total_pv_sell'] = options.get('set_total_pv_sell',params['optim_conf']['set_total_pv_sell'])
-        params['optim_conf']['lp_solver'] = options.get('lp_solver',params['optim_conf']['lp_solver'])
-        params['optim_conf']['lp_solver_path'] = options.get('lp_solver_path',params['optim_conf']['lp_solver_path'])
-        params['optim_conf']['set_nocharge_from_grid'] = options.get('set_nocharge_from_grid',params['optim_conf']['set_nocharge_from_grid'])
-        params['optim_conf']['set_nodischarge_to_grid'] = options.get('set_nodischarge_to_grid',params['optim_conf']['set_nodischarge_to_grid'])
-        params['optim_conf']['set_battery_dynamic'] = options.get('set_battery_dynamic',params['optim_conf']['set_battery_dynamic'])
-        params['optim_conf']['battery_dynamic_max'] = options.get('battery_dynamic_max',params['optim_conf']['battery_dynamic_max'])
-        params['optim_conf']['battery_dynamic_min'] = options.get('battery_dynamic_min',params['optim_conf']['battery_dynamic_min'])
-        params['optim_conf']['weight_battery_discharge'] = options.get('weight_battery_discharge',params['optim_conf']['weight_battery_discharge'])
-        params['optim_conf']['weight_battery_charge'] = options.get('weight_battery_charge',params['optim_conf']['weight_battery_charge'])
+        params['optim_conf']['prod_sell_price'] = options.get('photovoltaic_production_sell_price', params['optim_conf']['prod_sell_price'])
+        params['optim_conf']['set_total_pv_sell'] = options.get('set_total_pv_sell', params['optim_conf']['set_total_pv_sell'])
+        params['optim_conf']['lp_solver'] = options.get('lp_solver', params['optim_conf']['lp_solver'])
+        params['optim_conf']['lp_solver_path'] = options.get('lp_solver_path', params['optim_conf']['lp_solver_path'])
+        params['optim_conf']['set_nocharge_from_grid'] = options.get('set_nocharge_from_grid', params['optim_conf']['set_nocharge_from_grid'])
+        params['optim_conf']['set_nodischarge_to_grid'] = options.get('set_nodischarge_to_grid', params['optim_conf']['set_nodischarge_to_grid'])
+        params['optim_conf']['set_battery_dynamic'] = options.get('set_battery_dynamic', params['optim_conf']['set_battery_dynamic'])
+        params['optim_conf']['battery_dynamic_max'] = options.get('battery_dynamic_max', params['optim_conf']['battery_dynamic_max'])
+        params['optim_conf']['battery_dynamic_min'] = options.get('battery_dynamic_min', params['optim_conf']['battery_dynamic_min'])
+        params['optim_conf']['weight_battery_discharge'] = options.get('weight_battery_discharge', params['optim_conf']['weight_battery_discharge'])
+        params['optim_conf']['weight_battery_charge'] = options.get('weight_battery_charge', params['optim_conf']['weight_battery_charge'])
         if options.get('list_start_timesteps_of_each_deferrable_load',None) != None: 
             params['optim_conf']['def_start_timestep'] = [i['start_timesteps_of_each_deferrable_load'] for i in options.get('list_start_timesteps_of_each_deferrable_load')]
         if options.get('list_end_timesteps_of_each_deferrable_load',None) != None: 
             params['optim_conf']['def_end_timestep'] = [i['end_timesteps_of_each_deferrable_load'] for i in options.get('list_end_timesteps_of_each_deferrable_load')]
         # Updating variables in plant_conf
-        params['plant_conf']['P_from_grid_max'] = options.get('maximum_power_from_grid',params['plant_conf']['P_from_grid_max'])
-        params['plant_conf']['P_to_grid_max'] = options.get('maximum_power_to_grid',params['plant_conf']['P_to_grid_max'])
+        params['plant_conf']['P_from_grid_max'] = options.get('maximum_power_from_grid', params['plant_conf']['P_from_grid_max'])
+        params['plant_conf']['P_to_grid_max'] = options.get('maximum_power_to_grid', params['plant_conf']['P_to_grid_max'])
         if options.get('list_pv_module_model',None) != None:         
             params['plant_conf']['module_model'] = [i['pv_module_model'] for i in options.get('list_pv_module_model')]
         if options.get('list_pv_inverter_model',None) != None:        
@@ -880,14 +847,15 @@ def build_params(params: dict, params_secrets: dict, options: dict, addon: int,
             params['plant_conf']['modules_per_string'] = [i['modules_per_string'] for i in options.get('list_modules_per_string')]
         if options.get('list_strings_per_inverter',None) != None: 
             params['plant_conf']['strings_per_inverter'] = [i['strings_per_inverter'] for i in options.get('list_strings_per_inverter')]
-        params['plant_conf']['Pd_max'] = options.get('battery_discharge_power_max',params['plant_conf']['Pd_max']) 
-        params['plant_conf']['Pc_max'] = options.get('battery_charge_power_max',params['plant_conf']['Pc_max'])
-        params['plant_conf']['eta_disch'] = options.get('battery_discharge_efficiency',params['plant_conf']['eta_disch'])
-        params['plant_conf']['eta_ch'] = options.get('battery_charge_efficiency',params['plant_conf']['eta_ch'])
-        params['plant_conf']['Enom'] = options.get('battery_nominal_energy_capacity',params['plant_conf']['Enom'])
-        params['plant_conf']['SOCmin'] = options.get('battery_minimum_state_of_charge',params['plant_conf']['SOCmin']) 
-        params['plant_conf']['SOCmax'] = options.get('battery_maximum_state_of_charge',params['plant_conf']['SOCmax']) 
-        params['plant_conf']['SOCtarget'] = options.get('battery_target_state_of_charge',params['plant_conf']['SOCtarget'])
+        params["plant_conf"]["inverter_is_hybrid"] = options.get("inverter_is_hybrid", params["plant_conf"]["inverter_is_hybrid"])
+        params['plant_conf']['Pd_max'] = options.get('battery_discharge_power_max', params['plant_conf']['Pd_max']) 
+        params['plant_conf']['Pc_max'] = options.get('battery_charge_power_max', params['plant_conf']['Pc_max'])
+        params['plant_conf']['eta_disch'] = options.get('battery_discharge_efficiency', params['plant_conf']['eta_disch'])
+        params['plant_conf']['eta_ch'] = options.get('battery_charge_efficiency', params['plant_conf']['eta_ch'])
+        params['plant_conf']['Enom'] = options.get('battery_nominal_energy_capacity', params['plant_conf']['Enom'])
+        params['plant_conf']['SOCmin'] = options.get('battery_minimum_state_of_charge', params['plant_conf']['SOCmin']) 
+        params['plant_conf']['SOCmax'] = options.get('battery_maximum_state_of_charge', params['plant_conf']['SOCmax']) 
+        params['plant_conf']['SOCtarget'] = options.get('battery_target_state_of_charge', params['plant_conf']['SOCtarget'])
         # Check parameter lists have the same amounts as deferrable loads
         # If not, set defaults it fill in gaps
         if params['optim_conf']['num_def_loads'] is not len(params['optim_conf']['def_start_timestep']):
@@ -917,9 +885,7 @@ def build_params(params: dict, params_secrets: dict, options: dict, addon: int,
         # days_to_retrieve should be no less then 2
         if params["retrieve_hass_conf"]["days_to_retrieve"] < 2:
             params["retrieve_hass_conf"]["days_to_retrieve"] = 2
-            logger.warning(
-                "days_to_retrieve should not be lower then 2, setting days_to_retrieve to 2. Make sure your sensors also have at least 2 days of history"
-            )
+            logger.warning("days_to_retrieve should not be lower then 2, setting days_to_retrieve to 2. Make sure your sensors also have at least 2 days of history")
     else:
         params["params_secrets"] = params_secrets
     # The params dict

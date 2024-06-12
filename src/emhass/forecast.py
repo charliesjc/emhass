@@ -186,7 +186,7 @@ class Forecast(object):
         self.logger.info("Retrieving weather forecast data using method = "+method)
         self.weather_forecast_method = method # Saving this attribute for later use to identify csv method usage
         if method == 'scrapper':
-            freq_scrap = pd.to_timedelta(60, "minutes") # The scrapping time step is 60min
+            freq_scrap = pd.to_timedelta(60, "minutes") # The scrapping time step is 60min on clearoutside
             forecast_dates_scrap = pd.date_range(start=self.start_forecast,
                                                  end=self.end_forecast-freq_scrap, 
                                                  freq=freq_scrap).round(freq_scrap, ambiguous='infer', nonexistent='shift_forward')
@@ -204,7 +204,7 @@ class Forecast(object):
             col_names = [list_names[i].get_text() for i in selected_cols]
             list_tables = [list_tables[i] for i in selected_cols]
             # Building the raw DF container
-            raw_data = pd.DataFrame(index=range(24), columns=col_names, dtype=float)
+            raw_data = pd.DataFrame(index=range(len(forecast_dates_scrap)), columns=col_names, dtype=float)
             for count_col, col in enumerate(col_names):
                 list_rows = list_tables[count_col].find_all('li')
                 for count_row, row in enumerate(list_rows):
@@ -235,7 +235,8 @@ class Forecast(object):
                 "Authorization": "Bearer " + self.retrieve_hass_conf['solcast_api_key'],
                 "content-type": "application/json",
                 }
-            url = "https://api.solcast.com.au/rooftop_sites/"+self.retrieve_hass_conf['solcast_rooftop_id']+"/forecasts?hours=24"
+            days_solcast = int(len(self.forecast_dates)*self.freq.seconds/3600)
+            url = "https://api.solcast.com.au/rooftop_sites/"+self.retrieve_hass_conf['solcast_rooftop_id']+"/forecasts?hours="+str(days_solcast)
             response = get(url, headers=headers)
             '''import bz2 # Uncomment to save a serialized data for tests
             import _pickle as cPickle
@@ -263,7 +264,11 @@ class Forecast(object):
                 self.retrieve_hass_conf['solar_forecast_kwp'] = 5
             if  self.retrieve_hass_conf['solar_forecast_kwp'] == 0:
                 self.logger.warning("The solar_forecast_kwp parameter is set to zero, setting to default 5")
-                self.retrieve_hass_conf['solar_forecast_kwp'] = 5                   
+                self.retrieve_hass_conf['solar_forecast_kwp'] = 5
+            if self.optim_conf['delta_forecast'].days > 1:
+                self.logger.warning("The free public tier for solar.forecast only provides one day forecasts")
+                self.logger.warning("Continuing with just the first day of data, the other days are filled with 0.0.")
+                self.logger.warning("Use the other available methods for delta_forecast > 1")
             headers = {
                 "Accept": "application/json"
                 }
@@ -290,7 +295,8 @@ class Forecast(object):
                 mask_down_data_df = data_tmp.copy(deep=True).fillna(method = "bfill").isnull()
                 data_tmp.loc[data_tmp.index[mask_up_data_df['yhat']==True],:] = 0.0
                 data_tmp.loc[data_tmp.index[mask_down_data_df['yhat']==True],:] = 0.0
-                data_tmp.interpolate(inplace=True)
+                data_tmp.interpolate(inplace=True, limit=1)
+                data_tmp = data_tmp.fillna(0.0)
                 if len(data) == 0:
                     data = copy.deepcopy(data_tmp)
                 else:
@@ -418,9 +424,9 @@ class Forecast(object):
                 # Setting the main parameters of the PV plant
                 location = Location(latitude=self.lat, longitude=self.lon)
                 temp_params = TEMPERATURE_MODEL_PARAMETERS['sapm']['close_mount_glass_glass']
-                cec_modules =  bz2.BZ2File(pathlib.Path(__file__).parent / 'data/cec_modules.pbz2', "rb")
+                cec_modules = bz2.BZ2File(self.emhass_conf['root_path'] / 'data/cec_modules.pbz2', "rb")
                 cec_modules = cPickle.load(cec_modules)
-                cec_inverters = bz2.BZ2File(pathlib.Path(__file__).parent / 'data/cec_inverters.pbz2', "rb")
+                cec_inverters = bz2.BZ2File(self.emhass_conf['root_path'] / 'data/cec_inverters.pbz2', "rb")
                 cec_inverters = cPickle.load(cec_inverters)
                 if type(self.plant_conf['module_model']) == list:
                     P_PV_forecast = pd.Series(0, index=df_weather.index)
