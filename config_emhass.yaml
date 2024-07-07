@@ -37,6 +37,9 @@ optim_conf:
   set_def_constant: # set as a constant fixed value variable with just one startup for each 24h
   - False
   - False
+  def_start_penalty: # Set a penalty for each start up of a deferrable load
+  - 0.0
+  - 0.0
   weather_forecast_method: 'scrapper' # options are 'scrapper', 'csv', 'list', 'solcast' and 'solar.forecast'
   damping: 0 # options are 0, to apply no forecast correction, or up to 1 to account for early morning/late afternoon shadowing. Entering 0.25,0.75 would apply separate morning and evening corrections (only needed if weather_forecast_method='solar.forecast')
   horizon: 0 # see https://doc.forecast.solar/horizon for details on how to use the horizon function (only needed if weather_forecast_method='solar.forecast')
@@ -80,6 +83,7 @@ plant_conf:
   strings_per_inverter: # The number of used strings per inverter
   - 1
   inverter_is_hybrid: False # Set if it is a hybrid inverter (PV+batteries) or not
+  compute_curtailment: False # Compute a PV curtailment variable or not
   Pd_max: 1000 # If your system has a battery (set_use_battery=True), the maximum discharge power in Watts
   Pc_max: 1000 # If your system has a battery (set_use_battery=True), the maximum charge power in Watts
   eta_disch: 0.95 # If your system has a battery (set_use_battery=True), the discharge efficiency
