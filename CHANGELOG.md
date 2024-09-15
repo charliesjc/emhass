@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.6 - 2024-07-14
+### Fix
+- Fixed bug on predicted room temeprature publish, wrong key on DataFrame
+
+## 0.10.5 - 2024-07-12
+### Improvement
+- Added support for pubishing thermal load data, namely the predicted room temperature
+
+## 0.10.4 - 2024-07-10
+### Improvement
+- Added a new thermal modeling, see the new section in the documentation for help to implement this of model for thermal deferrable loads
+- Improved documentation
+
 ## 0.10.3 - 2024-07-06
 ### Improvement
 - Added improved support for `def_start_penalty` option

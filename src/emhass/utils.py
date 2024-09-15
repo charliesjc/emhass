@@ -143,12 +143,20 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
         params = {}
     # Some default data needed
     custom_deferrable_forecast_id = []
+    custom_predicted_temperature_id = []
     for k in range(optim_conf["num_def_loads"]):
         custom_deferrable_forecast_id.append(
             {
                 "entity_id": "sensor.p_deferrable{}".format(k),
                 "unit_of_measurement": "W",
                 "friendly_name": "Deferrable Load {}".format(k),
+            }
+        )
+        custom_predicted_temperature_id.append(
+            {
+                "entity_id": "sensor.temp_predicted{}".format(k),
+                "unit_of_measurement": "°C",
+                "friendly_name": "Predicted temperature {}".format(k),
             }
         )
     default_passed_dict = {
@@ -208,6 +216,7 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             "friendly_name": "Unit Prod Price",
         },
         "custom_deferrable_forecast_id": custom_deferrable_forecast_id,
+        "custom_predicted_temperature_id": custom_predicted_temperature_id,
         "publish_prefix": "",
     }
     if "passed_data" in params.keys():
@@ -285,16 +294,6 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             else:
                 def_end_timestep = runtimeparams["def_end_timestep"]
             params["passed_data"]["def_end_timestep"] = def_end_timestep
-            if "alpha" not in runtimeparams.keys():
-                alpha = 0.5
-            else:
-                alpha = runtimeparams["alpha"]
-            params["passed_data"]["alpha"] = alpha
-            if "beta" not in runtimeparams.keys():
-                beta = 0.5
-            else:
-                beta = runtimeparams["beta"]
-            params["passed_data"]["beta"] = beta
             forecast_dates = copy.deepcopy(forecast_dates)[0:prediction_horizon]
         else:
             params["passed_data"]["prediction_horizon"] = None
@@ -303,11 +302,9 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             params["passed_data"]["def_total_hours"] = None
             params["passed_data"]["def_start_timestep"] = None
             params["passed_data"]["def_end_timestep"] = None
-            params["passed_data"]["alpha"] = None
-            params["passed_data"]["beta"] = None
         # Treat passed forecast data lists
-        list_forecast_key = ['pv_power_forecast', 'load_power_forecast', 'load_cost_forecast', 'prod_price_forecast']
-        forecast_methods = ['weather_forecast_method', 'load_forecast_method', 'load_cost_forecast_method', 'prod_price_forecast_method']
+        list_forecast_key = ['pv_power_forecast', 'load_power_forecast', 'load_cost_forecast', 'prod_price_forecast', 'outdoor_temperature_forecast']
+        forecast_methods = ['weather_forecast_method', 'load_forecast_method', 'load_cost_forecast_method', 'prod_price_forecast_method', 'outdoor_temperature_forecast_method']
         # Param to save forecast cache (i.e. Solcast)
         if "weather_forecast_cache" not in runtimeparams.keys():
             weather_forecast_cache = False
@@ -389,19 +386,13 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
         if "model_predict_unit_of_measurement" not in runtimeparams.keys():
             model_predict_unit_of_measurement = "W"
         else:
-            model_predict_unit_of_measurement = runtimeparams[
-                "model_predict_unit_of_measurement"
-            ]
-        params["passed_data"][
-            "model_predict_unit_of_measurement"
-        ] = model_predict_unit_of_measurement
+            model_predict_unit_of_measurement = runtimeparams["model_predict_unit_of_measurement"]
+        params["passed_data"]["model_predict_unit_of_measurement"] = model_predict_unit_of_measurement
         if "model_predict_friendly_name" not in runtimeparams.keys():
             model_predict_friendly_name = "Load Power Forecast custom ML model"
         else:
             model_predict_friendly_name = runtimeparams["model_predict_friendly_name"]
-        params["passed_data"][
-            "model_predict_friendly_name"
-        ] = model_predict_friendly_name
+        params["passed_data"]["model_predict_friendly_name"] = model_predict_friendly_name
         if "mlr_predict_entity_id" not in runtimeparams.keys():
             mlr_predict_entity_id = "sensor.mlr_predict"
         else:
@@ -410,17 +401,24 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
         if "mlr_predict_unit_of_measurement" not in runtimeparams.keys():
             mlr_predict_unit_of_measurement = None
         else:
-            mlr_predict_unit_of_measurement = runtimeparams[
-                "mlr_predict_unit_of_measurement"
-            ]
-        params["passed_data"][
-            "mlr_predict_unit_of_measurement"
-        ] = mlr_predict_unit_of_measurement
+            mlr_predict_unit_of_measurement = runtimeparams["mlr_predict_unit_of_measurement"]
+        params["passed_data"]["mlr_predict_unit_of_measurement"] = mlr_predict_unit_of_measurement
         if "mlr_predict_friendly_name" not in runtimeparams.keys():
             mlr_predict_friendly_name = "mlr predictor"
         else:
             mlr_predict_friendly_name = runtimeparams["mlr_predict_friendly_name"]
         params["passed_data"]["mlr_predict_friendly_name"] = mlr_predict_friendly_name
+        # Treat passed data for other parameters
+        if "alpha" not in runtimeparams.keys():
+            alpha = 0.5
+        else:
+            alpha = runtimeparams["alpha"]
+        params["passed_data"]["alpha"] = alpha
+        if "beta" not in runtimeparams.keys():
+            beta = 0.5
+        else:
+            beta = runtimeparams["beta"]
+        params["passed_data"]["beta"] = beta
         # Treat optimization configuration parameters passed at runtime
         if "num_def_loads" in runtimeparams.keys():
             optim_conf["num_def_loads"] = runtimeparams["num_def_loads"]
@@ -447,6 +445,8 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
             optim_conf["def_start_penalty"] = [
                 ast.literal_eval(str(k).capitalize()) for k in runtimeparams["def_start_penalty"]
             ]
+        if 'def_load_config' in runtimeparams:
+            optim_conf["def_load_config"] = runtimeparams['def_load_config']
         if "solcast_api_key" in runtimeparams.keys():
             retrieve_hass_conf["solcast_api_key"] = runtimeparams["solcast_api_key"]
             optim_conf["weather_forecast_method"] = "solcast"
@@ -469,7 +469,7 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
         if 'freq' in runtimeparams.keys():
             retrieve_hass_conf['freq'] = pd.to_timedelta(runtimeparams['freq'], "minutes")
         if 'continual_publish' in runtimeparams.keys():
-            retrieve_hass_conf['continual_publish'] = bool(runtimeparams['continual_publish'])  
+            retrieve_hass_conf['continual_publish'] = bool(runtimeparams['continual_publish'])
         # Treat plant configuration parameters passed at runtime
         if "SOCmin" in runtimeparams.keys():
             plant_conf["SOCmin"] = runtimeparams["SOCmin"]
@@ -529,6 +529,10 @@ def treat_runtimeparams(runtimeparams: str, params: str, retrieve_hass_conf: dic
         if "custom_deferrable_forecast_id" in runtimeparams.keys():
             params["passed_data"]["custom_deferrable_forecast_id"] = runtimeparams[
                 "custom_deferrable_forecast_id"
+            ]
+        if "custom_predicted_temperature_id" in runtimeparams.keys():
+            params["passed_data"]["custom_predicted_temperature_id"] = runtimeparams[
+                "custom_predicted_temperature_id"
             ]
         # A condition to put a prefix on all published data, or check for saved data under prefix name
         if "publish_prefix" not in runtimeparams.keys():
@@ -952,7 +956,8 @@ def set_df_index_freq(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     idx_diff = np.diff(df.index)
+    # Sometimes there are zero values in this list.
+    idx_diff = idx_diff[np.nonzero(idx_diff)]
     sampling = pd.to_timedelta(np.median(idx_diff))
     df = df[~df.index.duplicated()]
-    df = df.asfreq(sampling)
-    return df
+    return df.asfreq(sampling)
